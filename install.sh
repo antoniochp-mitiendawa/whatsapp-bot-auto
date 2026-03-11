@@ -41,7 +41,6 @@ cat > package.json << 'EOF'
     "@whiskeysockets/baileys": "^6.5.0",
     "node-cron": "^3.0.3",
     "fluent-ffmpeg": "^2.1.2",
-    "qrcode-terminal": "^0.12.0",
     "pino": "^8.17.2"
   }
 }
@@ -51,11 +50,11 @@ EOF
 echo "📦 Instalando dependencias de Node.js..."
 npm install
 
-# 8. CREAR ARCHIVO DEL BOT (bot.js) - VERSIÓN CON PAUSA PARA NÚMERO
+# 8. CREAR ARCHIVO DEL BOT (bot.js) - VERSIÓN SECUENCIAL
 echo "🤖 Creando archivo principal del bot..."
 cat > bot.js << 'EOF'
 // ==============================================
-// BOT WHATSAPP AUTOMÁTICO - VERSIÓN ESTABLE
+// BOT WHATSAPP AUTOMÁTICO - VERSIÓN SECUENCIAL
 // ==============================================
 
 const { default: makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
@@ -84,9 +83,8 @@ if (!fs.existsSync(CONFIG.groupsFile)) fs.writeFileSync(CONFIG.groupsFile, '{}')
 
 // Variables globales
 let sock = null;
-let reconnectAttempts = 0;
 let isConnected = false;
-let pairingCodeRequested = false;
+let phoneNumber = '';
 
 // Cargar registros
 function loadSentLog() {
@@ -232,10 +230,28 @@ async function mainTask() {
 }
 
 // ==============================================
-// FUNCIÓN DE CONEXIÓN - VERSIÓN ESTABLE
+// FUNCIÓN PARA PEDIR NÚMERO (ANTES DE CONECTAR)
+// ==============================================
+function askPhoneNumber() {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+    
+    rl.question('\n📱 Escribe tu número de teléfono (ej: 52123456789): ', (number) => {
+      rl.close();
+      resolve(number.replace(/[^0-9]/g, ''));
+    });
+  });
+}
+
+// ==============================================
+// FUNCIÓN DE CONEXIÓN - VERSIÓN SECUENCIAL
 // ==============================================
 async function connectToWhatsApp() {
   console.log('🔄 Conectando a WhatsApp...');
+  console.log('📱 Usando número:', phoneNumber);
   
   try {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
@@ -248,104 +264,75 @@ async function connectToWhatsApp() {
       generateHighQualityLinkPreview: false
     });
     
-    pairingCodeRequested = false;
+    // Solicitar código de emparejamiento inmediatamente
+    setTimeout(async () => {
+      try {
+        console.log(`⏳ Solicitando código para: ${phoneNumber}`);
+        const pairingCode = await sock.requestPairingCode(phoneNumber);
+        
+        console.log('\n========================================');
+        console.log('✅ TU CÓDIGO DE EMPAREJAMIENTO ES:');
+        console.log('========================================');
+        console.log(`🔐 ${pairingCode}`);
+        console.log('========================================');
+        console.log('\n📱 Abre WhatsApp en tu teléfono');
+        console.log('➡️  Ajustes > Dispositivos vinculados');
+        console.log('➡️  "Vincular un dispositivo"');
+        console.log('➡️  "Vincular con número de teléfono"');
+        console.log('➡️  Ingresa este código\n');
+        console.log('⏳ Esperando conexión...\n');
+        
+      } catch (err) {
+        console.log('❌ Error solicitando código:', err.message);
+      }
+    }, 2000);
     
-    sock.ev.on('connection.update', async (update) => {
-      const { connection, lastDisconnect, qr } = update;
+    sock.ev.on('connection.update', (update) => {
+      const { connection } = update;
       
       if (connection === 'open') {
         console.log('\n✅ CONECTADO A WHATSAPP EXITOSAMENTE');
         console.log('🎉 El bot ya está funcionando\n');
         isConnected = true;
-        reconnectAttempts = 0;
-        pairingCodeRequested = true; // Marcar como ya solicitado
       }
       
       if (connection === 'close') {
-        console.log('❌ Conexión cerrada');
-        isConnected = false;
-        
-        // Solo reconectar si NO estamos esperando código
-        if (!pairingCodeRequested) {
-          reconnectAttempts++;
-          const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 60000);
-          console.log(`⏳ Reintentando en ${delay/1000} segundos...`);
-          setTimeout(connectToWhatsApp, delay);
-        } else {
-          console.log('⏳ Esperando que ingreses el código de emparejamiento...');
-        }
-      }
-      
-      // Mostrar QR si aparece (método alternativo)
-      if (qr) {
-        console.log('📱 Código QR detectado (método alternativo):');
-        console.log(qr);
-      }
-      
-      // Cuando el socket está listo, solicitar código de emparejamiento (solo una vez)
-      if (connection === 'connecting' && !pairingCodeRequested) {
-        pairingCodeRequested = true;
-        
-        // Crear interfaz readline
-        const rl = readline.createInterface({
-          input: process.stdin,
-          output: process.stdout
-        });
-        
-        // Pedir número de teléfono
-        rl.question('\n📱 Escribe tu número de teléfono (ej: 52123456789): ', async (phoneNumber) => {
-          // Limpiar número
-          phoneNumber = phoneNumber.replace(/[^0-9]/g, '');
-          
-          console.log(`⏳ Solicitando código para: ${phoneNumber}`);
-          
-          try {
-            // Solicitar código de emparejamiento
-            const pairingCode = await sock.requestPairingCode(phoneNumber);
-            
-            console.log('\n========================================');
-            console.log('✅ TU CÓDIGO DE EMPAREJAMIENTO ES:');
-            console.log('========================================');
-            console.log(`🔐 ${pairingCode}`);
-            console.log('========================================');
-            console.log('\n📱 Abre WhatsApp en tu teléfono');
-            console.log('➡️  Ajustes > Dispositivos vinculados');
-            console.log('➡️  "Vincular un dispositivo"');
-            console.log('➡️  "Vincular con número de teléfono"');
-            console.log('➡️  Ingresa este código\n');
-            console.log('⏳ Esperando conexión... (esto puede tardar unos segundos)\n');
-            
-            // Cerrar readline después de mostrar el código
-            rl.close();
-            
-          } catch (err) {
-            console.log('❌ Error solicitando código:', err.message);
-            rl.close();
-            pairingCodeRequested = false; // Permitir reintentar
-          }
-        });
+        console.log('❌ Conexión cerrada. Reintentando en 30 segundos...');
+        setTimeout(connectToWhatsApp, 30000);
       }
     });
     
     sock.ev.on('creds.update', saveCreds);
     
   } catch (err) {
-    console.log('Error conectando:', err);
-    setTimeout(connectToWhatsApp, 5000);
+    console.log('Error conectando:', err.message);
+    setTimeout(connectToWhatsApp, 30000);
   }
 }
 
-// Iniciar
-console.log('🚀 Iniciando Bot WhatsApp...');
-console.log('📱 Versión con código de emparejamiento\n');
-connectToWhatsApp();
+// ==============================================
+// FLUJO PRINCIPAL
+// ==============================================
+async function main() {
+  console.log('🚀 Iniciando Bot WhatsApp...');
+  console.log('📱 Versión con código de emparejamiento\n');
+  
+  // PASO 1: PEDIR NÚMERO (antes de cualquier conexión)
+  phoneNumber = await askPhoneNumber();
+  
+  // PASO 2: CONECTAR con el número proporcionado
+  await connectToWhatsApp();
+  
+  // PASO 3: Programar tarea
+  cron.schedule(CONFIG.checkInterval, mainTask);
+  console.log(`⏰ Tarea programada cada 30 minutos`);
+}
 
-// Programar tarea
-cron.schedule(CONFIG.checkInterval, mainTask);
-console.log(`⏰ Tarea programada cada 30 minutos`);
+// Iniciar
+main().catch(console.error);
 
 // Mantener proceso vivo
-process.on('uncaughtException', (err) => {});
+process.on('uncaughtException', () => {});
 EOF
 
 # 9. CREAR OVERLAYS BÁSICOS
@@ -391,20 +378,15 @@ echo "========================================"
 echo ""
 echo "📱 PASOS PARA CONECTAR EL BOT:"
 echo ""
-echo "1️⃣  El bot iniciará automáticamente"
-echo "2️⃣  Te pedirá tu número de teléfono"
-echo "3️⃣  Escríbelo completo (ej: 52123456789)"
-echo "4️⃣  Recibirás un código de 8 dígitos"
-echo "5️⃣  Abre WhatsApp > Ajustes > Dispositivos vinculados"
-echo "6️⃣  Elige 'Vincular con número de teléfono'"
-echo "7️⃣  Ingresa el código"
+echo "1️⃣  El bot te pedirá tu número de teléfono"
+echo "2️⃣  Escríbelo completo (ej: 52123456789)"
+echo "3️⃣  Recibirás un código de 8 dígitos"
+echo "4️⃣  Abre WhatsApp > Ajustes > Dispositivos vinculados"
+echo "5️⃣  Elige 'Vincular con número de teléfono'"
+echo "6️⃣  Ingresa el código"
 echo ""
 echo "🖼️ Para poner tus productos:"
 echo "   📁 /sdcard/MisProductos/"
-echo ""
-echo "✅ El bot se reinicia solo si:"
-echo "   - Se desconecta de internet"
-echo "   - Reinicias tu teléfono"
 echo ""
 echo "========================================"
 echo ""
