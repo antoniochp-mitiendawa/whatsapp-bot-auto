@@ -41,6 +41,7 @@ cat > package.json << 'EOF'
     "@whiskeysockets/baileys": "^6.5.0",
     "node-cron": "^3.0.3",
     "fluent-ffmpeg": "^2.1.2",
+    "qrcode-terminal": "^0.12.0",
     "pino": "^8.17.2"
   }
 }
@@ -440,12 +441,13 @@ echo "========================================"
 echo ""
 echo "📱 PASOS PARA CONECTAR EL BOT:"
 echo ""
-echo "1️⃣  El bot te pedirá tu número de teléfono"
-echo "2️⃣  Escríbelo completo (ej: 52123456789)"
-echo "3️⃣  Recibirás un código de 8 dígitos"
-echo "4️⃣  Abre WhatsApp > Ajustes > Dispositivos vinculados"
-echo "5️⃣  Elige 'Vincular con número de teléfono'"
-echo "6️⃣  Ingresa el código que apareció en Termux"
+echo "1️⃣  En este momento el bot está iniciando"
+echo "2️⃣  Te pedirá tu número de teléfono"
+echo "3️⃣  Escríbelo completo (ej: 52123456789)"
+echo "4️⃣  Recibirás un código de 8 dígitos"
+echo "5️⃣  Abre WhatsApp > Ajustes > Dispositivos vinculados"
+echo "6️⃣  Elige 'Vincular con número de teléfono'"
+echo "7️⃣  Ingresa el código que apareció en Termux"
 echo ""
 echo "🖼️ Para poner tus productos:"
 echo "   - Coloca imágenes JPG o PNG en:"
@@ -462,6 +464,32 @@ echo ""
 echo "========================================"
 echo ""
 
-# 12. INICIAR BOT
-cd ~/whatsapp-bot
-node bot.js
+# 12. VERIFICAR QUE LA CARPETA EXISTE ANTES DE ENTRAR
+if [ -d ~/whatsapp-bot ]; then
+    cd ~/whatsapp-bot
+    echo "🚀 Iniciando el bot..."
+    node bot.js
+else
+    echo "❌ ERROR: No se pudo encontrar la carpeta ~/whatsapp-bot"
+    echo "Intentando crear estructura manualmente..."
+    
+    mkdir -p ~/whatsapp-bot
+    cd ~/whatsapp-bot
+    
+    # Si el archivo bot.js no existe, lo creamos de emergencia
+    if [ ! -f bot.js ]; then
+        echo "⚠️ Recreando archivos necesarios..."
+        # No podemos copiar porque no hay temp, solo mostramos error
+        echo "❌ Error crítico: No se pudo recuperar el bot"
+        echo "Por favor, reinstala desde cero."
+        exit 1
+    fi
+    
+    if [ -f bot.js ]; then
+        echo "✅ Archivos recuperados. Iniciando bot..."
+        node bot.js
+    else
+        echo "❌ Error crítico: No se pudo recuperar el bot"
+        echo "Por favor, reinstala desde cero."
+    fi
+fi
