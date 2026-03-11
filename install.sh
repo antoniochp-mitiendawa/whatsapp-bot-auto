@@ -1,397 +1,136 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
-# ==============================================
-# INSTALADOR AUTOMÁTICO - BOT WHATSAPP
-# Una sola línea para instalar todo
-# ==============================================
-
-echo "📦 INICIANDO INSTALACIÓN DEL BOT WHATSAPP"
-echo "========================================"
-
-# 1. ACTUALIZAR TERMUX
-echo "🔄 Actualizando Termux..."
+echo "📦 INSTALANDO BOT WHATSAPP"
+echo "========================"
 pkg update -y && pkg upgrade -y
+pkg install -y nodejs ffmpeg
 
-# 2. INSTALAR DEPENDENCIAS BÁSICAS
-echo "📥 Instalando paquetes necesarios..."
-pkg install -y nodejs ffmpeg git termux-services
-
-# 3. CREAR CARPETA DEL BOT
-echo "📁 Creando estructura de carpetas..."
 cd ~
 mkdir -p whatsapp-bot
 cd whatsapp-bot
-
-# 4. CREAR CARPETA PARA PRODUCTOS DEL USUARIO
-echo "🖼️ Creando carpeta para tus productos..."
 mkdir -p /sdcard/MisProductos
-
-# 5. CREAR CARPETA PARA OVERLAYS
 mkdir -p overlays
 
-# 6. CREAR ARCHIVO package.json
-echo "📦 Creando package.json..."
+# Package.json
 cat > package.json << 'EOF'
 {
-  "name": "whatsapp-bot-auto",
-  "version": "1.0.0",
-  "description": "Bot automático para WhatsApp",
-  "main": "bot.js",
+  "name": "bot",
   "dependencies": {
     "@whiskeysockets/baileys": "^6.5.0",
-    "node-cron": "^3.0.3",
-    "fluent-ffmpeg": "^2.1.2",
     "pino": "^8.17.2"
   }
 }
 EOF
 
-# 7. INSTALAR DEPENDENCIAS NODE
-echo "📦 Instalando dependencias de Node.js..."
 npm install
 
-# 8. CREAR ARCHIVO DEL BOT (bot.js) - VERSIÓN SECUENCIAL
-echo "🤖 Creando archivo principal del bot..."
-cat > bot.js << 'EOF'
-// ==============================================
-// BOT WHATSAPP AUTOMÁTICO - VERSIÓN SECUENCIAL
-// ==============================================
-
+# Crear autenticador - VERSIÓN SIMPLE
+cat > login.js << 'EOF'
 const { default: makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
-const fs = require('fs');
-const path = require('path');
-const cron = require('node-cron');
-const ffmpeg = require('fluent-ffmpeg');
 const P = require('pino');
 const readline = require('readline');
 
-// Configuración
-const CONFIG = {
-  productsDir: '/sdcard/MisProductos',
-  overlaysDir: './overlays',
-  tempDir: './temp',
-  sentLog: './sent_log.json',
-  groupsFile: './groups.json',
-  checkInterval: '*/30 * * * *',
-  groupsPerBatch: 5
-};
-
-// Crear directorios necesarios
-if (!fs.existsSync(CONFIG.tempDir)) fs.mkdirSync(CONFIG.tempDir, { recursive: true });
-if (!fs.existsSync(CONFIG.sentLog)) fs.writeFileSync(CONFIG.sentLog, '[]');
-if (!fs.existsSync(CONFIG.groupsFile)) fs.writeFileSync(CONFIG.groupsFile, '{}');
-
-// Variables globales
-let sock = null;
-let isConnected = false;
-let phoneNumber = '';
-
-// Cargar registros
-function loadSentLog() {
-  try {
-    return JSON.parse(fs.readFileSync(CONFIG.sentLog));
-  } catch {
-    return [];
-  }
-}
-
-function saveSentLog(log) {
-  fs.writeFileSync(CONFIG.sentLog, JSON.stringify(log, null, 2));
-}
-
-// Obtener productos no usados
-function getNextProduct() {
-  if (!fs.existsSync(CONFIG.productsDir)) return null;
+async function main() {
+  console.log('\n🔐 AUTENTICACIÓN WHATSAPP\n');
   
-  const products = fs.readdirSync(CONFIG.productsDir)
-    .filter(f => f.match(/\.(jpg|jpeg|png|webp)$/i));
-  
-  if (products.length === 0) return null;
-  
-  const sentLog = loadSentLog();
-  const available = products.filter(p => !sentLog.includes(p));
-  
-  if (available.length === 0) {
-    saveSentLog([]);
-    return products[Math.floor(Math.random() * products.length)];
-  }
-  
-  return available[Math.floor(Math.random() * available.length)];
-}
-
-// Generar GIF con overlay
-async function generateGif(productFile) {
-  return new Promise((resolve, reject) => {
-    const productPath = path.join(CONFIG.productsDir, productFile);
-    
-    let overlays = [];
-    try {
-      overlays = fs.readdirSync(CONFIG.overlaysDir).filter(f => f.endsWith('.gif'));
-    } catch {
-      return reject('No hay overlays');
-    }
-    
-    if (overlays.length === 0) return reject('No hay overlays');
-    
-    const overlay = overlays[Math.floor(Math.random() * overlays.length)];
-    const outputPath = path.join(CONFIG.tempDir, `output_${Date.now()}.gif`);
-    
-    ffmpeg()
-      .input(productPath)
-      .input(path.join(CONFIG.overlaysDir, overlay))
-      .complexFilter([{ filter: 'overlay', options: { x: '(W-w)/2', y: '(H-h)/2' } }])
-      .on('end', () => resolve(outputPath))
-      .on('error', reject)
-      .save(outputPath);
+  // Crear interfaz ANTES de cualquier cosa
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
   });
-}
-
-// Obtener grupos disponibles
-async function getAvailableGroups() {
-  if (!sock) return [];
   
-  try {
-    const groupsData = await sock.groupFetchAllParticipating();
-    const allGroups = Object.keys(groupsData);
-    
-    let currentGroups = {};
-    try {
-      currentGroups = JSON.parse(fs.readFileSync(CONFIG.groupsFile));
-    } catch {
-      currentGroups = {};
-    }
-    
-    const now = Date.now();
-    const oneWeek = 7 * 24 * 60 * 60 * 1000;
-    
-    const available = allGroups.filter(id => {
-      const lastSent = currentGroups[id] || 0;
-      return now - lastSent > oneWeek;
-    });
-    
-    return available.slice(0, CONFIG.groupsPerBatch);
-  } catch (err) {
-    return [];
-  }
-}
-
-// Enviar estado a grupos
-async function sendToGroups(gifPath, targetGroups) {
-  try {
-    const gifBuffer = fs.readFileSync(gifPath);
-    
-    for (const groupId of targetGroups) {
-      try {
-        await sock.sendMessage(groupId, {
-          image: gifBuffer,
-          caption: '✨ Nuestros productos ✨',
-          viewOnce: true
-        });
-        
-        let groups = {};
-        try {
-          groups = JSON.parse(fs.readFileSync(CONFIG.groupsFile));
-        } catch {
-          groups = {};
-        }
-        
-        groups[groupId] = Date.now();
-        fs.writeFileSync(CONFIG.groupsFile, JSON.stringify(groups, null, 2));
-        
-        await new Promise(r => setTimeout(r, 2000));
-      } catch (err) {}
-    }
-  } catch (err) {}
-}
-
-// Tarea principal
-async function mainTask() {
-  if (!isConnected || !sock) return;
-  
-  try {
-    const productFile = getNextProduct();
-    if (!productFile) return;
-    
-    const gifPath = await generateGif(productFile);
-    if (!gifPath) return;
-    
-    const targetGroups = await getAvailableGroups();
-    if (targetGroups.length === 0) return;
-    
-    await sendToGroups(gifPath, targetGroups);
-    
-    const sentLog = loadSentLog();
-    sentLog.push(productFile);
-    saveSentLog(sentLog);
-    
-    try { fs.unlinkSync(gifPath); } catch {}
-    
-  } catch (err) {}
-}
-
-// ==============================================
-// FUNCIÓN PARA PEDIR NÚMERO (ANTES DE CONECTAR)
-// ==============================================
-function askPhoneNumber() {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout
-    });
-    
-    rl.question('\n📱 Escribe tu número de teléfono (ej: 52123456789): ', (number) => {
-      rl.close();
-      resolve(number.replace(/[^0-9]/g, ''));
-    });
+  // Función para preguntar
+  const pregunta = (texto) => new Promise((resolve) => {
+    rl.question(texto, resolve);
   });
-}
-
-// ==============================================
-// FUNCIÓN DE CONEXIÓN - VERSIÓN SECUENCIAL
-// ==============================================
-async function connectToWhatsApp() {
-  console.log('🔄 Conectando a WhatsApp...');
-  console.log('📱 Usando número:', phoneNumber);
   
   try {
+    // 1. PEDIR NÚMERO (esto espera hasta que el usuario escriba)
+    const numero = await pregunta('📱 Tu número (ej: 52123456789): ');
+    const numeroLimpio = numero.replace(/[^0-9]/g, '');
+    
+    console.log(`\n⏳ Conectando con ${numeroLimpio}...`);
+    
+    // 2. INICIAR SESIÓN
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     
-    sock = makeWASocket({
+    const sock = makeWASocket({
       auth: state,
       logger: P({ level: 'silent' }),
-      browser: ['WhatsApp Bot', 'Chrome', '1.0.0'],
-      syncFullHistory: false,
-      generateHighQualityLinkPreview: false
+      browser: ['Bot', 'Chrome', '1.0']
     });
     
-    // Solicitar código de emparejamiento inmediatamente
+    // 3. SOLICITAR CÓDIGO
     setTimeout(async () => {
       try {
-        console.log(`⏳ Solicitando código para: ${phoneNumber}`);
-        const pairingCode = await sock.requestPairingCode(phoneNumber);
-        
-        console.log('\n========================================');
-        console.log('✅ TU CÓDIGO DE EMPAREJAMIENTO ES:');
-        console.log('========================================');
-        console.log(`🔐 ${pairingCode}`);
-        console.log('========================================');
-        console.log('\n📱 Abre WhatsApp en tu teléfono');
-        console.log('➡️  Ajustes > Dispositivos vinculados');
-        console.log('➡️  "Vincular un dispositivo"');
-        console.log('➡️  "Vincular con número de teléfono"');
-        console.log('➡️  Ingresa este código\n');
+        const codigo = await sock.requestPairingCode(numeroLimpio);
+        console.log('\n✅ CÓDIGO: ' + codigo);
+        console.log('\n📱 WhatsApp > Ajustes > Dispositivos vinculados');
+        console.log('➡️  "Vincular con número de teléfono"\n');
         console.log('⏳ Esperando conexión...\n');
-        
-      } catch (err) {
-        console.log('❌ Error solicitando código:', err.message);
+      } catch (e) {
+        console.log('Error:', e.message);
       }
     }, 2000);
     
+    // 4. ESPERAR CONEXIÓN
     sock.ev.on('connection.update', (update) => {
       const { connection } = update;
-      
       if (connection === 'open') {
-        console.log('\n✅ CONECTADO A WHATSAPP EXITOSAMENTE');
-        console.log('🎉 El bot ya está funcionando\n');
-        isConnected = true;
-      }
-      
-      if (connection === 'close') {
-        console.log('❌ Conexión cerrada. Reintentando en 30 segundos...');
-        setTimeout(connectToWhatsApp, 30000);
+        console.log('✅ CONECTADO! Ya puedes usar: node bot.js');
+        rl.close();
+        process.exit(0);
       }
     });
     
     sock.ev.on('creds.update', saveCreds);
     
-  } catch (err) {
-    console.log('Error conectando:', err.message);
-    setTimeout(connectToWhatsApp, 30000);
+  } catch (e) {
+    console.log('Error:', e);
+    rl.close();
   }
 }
 
-// ==============================================
-// FLUJO PRINCIPAL
-// ==============================================
-async function main() {
-  console.log('🚀 Iniciando Bot WhatsApp...');
-  console.log('📱 Versión con código de emparejamiento\n');
+main();
+EOF
+
+# Bot principal simple
+cat > bot.js << 'EOF'
+const { default: makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
+const P = require('pino');
+
+async function start() {
+  const { state, saveCreds } = await useMultiFileAuthState('auth_info');
+  const sock = makeWASocket({ auth: state, logger: P({ level: 'silent' }) });
   
-  // PASO 1: PEDIR NÚMERO (antes de cualquier conexión)
-  phoneNumber = await askPhoneNumber();
+  sock.ev.on('connection.update', ({ connection }) => {
+    if (connection === 'open') console.log('✅ Bot funcionando');
+  });
   
-  // PASO 2: CONECTAR con el número proporcionado
-  await connectToWhatsApp();
-  
-  // PASO 3: Programar tarea
-  cron.schedule(CONFIG.checkInterval, mainTask);
-  console.log(`⏰ Tarea programada cada 30 minutos`);
+  sock.ev.on('creds.update', saveCreds);
 }
 
-// Iniciar
-main().catch(console.error);
-
-// Mantener proceso vivo
-process.on('uncaughtException', () => {});
+console.log('🚀 Iniciando bot...');
+start();
 EOF
 
-# 9. CREAR OVERLAYS BÁSICOS
-echo "🎨 Creando overlays básicos..."
+# Overlays básicos
+for g in oferta promo nuevo descuento; do
+  echo "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" > overlays/$g.gif
+done
 
-cat > overlays/oferta.gif << 'EOF'
-R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7
-EOF
+echo ""
+echo "✅ INSTALACIÓN COMPLETA"
+echo "======================"
+echo ""
+echo "📱 AUTENTICAR (PRIMERA VEZ):"
+echo "   cd ~/whatsapp-bot"
+echo "   node login.js"
+echo ""
+echo "🤖 INICIAR BOT:"
+echo "   node bot.js"
+echo ""
+echo "🖼️ PRODUCTOS: /sdcard/MisProductos/"
+echo ""
 
-cat > overlays/promo.gif << 'EOF'
-R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7
-EOF
-
-cat > overlays/nuevo.gif << 'EOF'
-R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7
-EOF
-
-cat > overlays/descuento.gif << 'EOF'
-R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7
-EOF
-
-cat > overlays/destacado.gif << 'EOF'
-R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7
-EOF
-
-# 10. CONFIGURAR INICIO AUTOMÁTICO
-echo "⚙️ Configurando inicio automático..."
-mkdir -p ~/.termux/boot
-
-cat > ~/.termux/boot/start-bot.sh << 'EOF'
-#!/data/data/com.termux/files/usr/bin/bash
 cd ~/whatsapp-bot
-node bot.js
-EOF
-
-chmod +x ~/.termux/boot/start-bot.sh
-
-# 11. MENSAJE FINAL
-echo ""
-echo "========================================"
-echo "✅ INSTALACIÓN COMPLETADA"
-echo "========================================"
-echo ""
-echo "📱 PASOS PARA CONECTAR EL BOT:"
-echo ""
-echo "1️⃣  El bot te pedirá tu número de teléfono"
-echo "2️⃣  Escríbelo completo (ej: 52123456789)"
-echo "3️⃣  Recibirás un código de 8 dígitos"
-echo "4️⃣  Abre WhatsApp > Ajustes > Dispositivos vinculados"
-echo "5️⃣  Elige 'Vincular con número de teléfono'"
-echo "6️⃣  Ingresa el código"
-echo ""
-echo "🖼️ Para poner tus productos:"
-echo "   📁 /sdcard/MisProductos/"
-echo ""
-echo "========================================"
-echo ""
-
-# 12. INICIAR BOT
-cd ~/whatsapp-bot
-echo "🚀 Iniciando el bot..."
-node bot.js
