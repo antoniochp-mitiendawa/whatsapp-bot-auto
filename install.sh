@@ -51,14 +51,14 @@ EOF
 echo "📦 Instalando dependencias de Node.js..."
 npm install
 
-# 8. CREAR ARCHIVO DEL BOT (bot.js) - VERSIÓN CON CÓDIGO DE EMPAREJAMIENTO
+# 8. CREAR ARCHIVO DEL BOT (bot.js) - VERSIÓN CORREGIDA
 echo "🤖 Creando archivo principal del bot..."
 cat > bot.js << 'EOF'
 // ==============================================
-// BOT WHATSAPP AUTOMÁTICO - CON CÓDIGO DE EMPAREJAMIENTO
+// BOT WHATSAPP AUTOMÁTICO - CON CÓDIGO DE EMPAREJAMIENTO CORREGIDO
 // ==============================================
 
-const { default: makeWASocket, useMultiFileAuthState, makeCacheableSignalKeyStore } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
@@ -73,7 +73,7 @@ const CONFIG = {
   tempDir: './temp',
   sentLog: './sent_log.json',
   groupsFile: './groups.json',
-  checkInterval: '*/30 * * * *', // Cada 30 minutos
+  checkInterval: '*/30 * * * *',
   groupsPerBatch: 5
 };
 
@@ -86,12 +86,6 @@ if (!fs.existsSync(CONFIG.groupsFile)) fs.writeFileSync(CONFIG.groupsFile, '{}')
 let sock = null;
 let reconnectAttempts = 0;
 let isConnected = false;
-
-// Interfaz para leer entrada del usuario
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-});
 
 // Cargar registros
 function loadSentLog() {
@@ -119,7 +113,6 @@ function getNextProduct() {
   const available = products.filter(p => !sentLog.includes(p));
   
   if (available.length === 0) {
-    // Reiniciar ciclo
     saveSentLog([]);
     return products[Math.floor(Math.random() * products.length)];
   }
@@ -132,18 +125,14 @@ async function generateGif(productFile) {
   return new Promise((resolve, reject) => {
     const productPath = path.join(CONFIG.productsDir, productFile);
     
-    // Leer overlays disponibles
     let overlays = [];
     try {
       overlays = fs.readdirSync(CONFIG.overlaysDir).filter(f => f.endsWith('.gif'));
     } catch {
-      console.log('⚠️ No hay overlays en la carpeta');
       return reject('No hay overlays');
     }
     
-    if (overlays.length === 0) {
-      return reject('No hay overlays');
-    }
+    if (overlays.length === 0) return reject('No hay overlays');
     
     const overlay = overlays[Math.floor(Math.random() * overlays.length)];
     const outputPath = path.join(CONFIG.tempDir, `output_${Date.now()}.gif`);
@@ -151,19 +140,14 @@ async function generateGif(productFile) {
     ffmpeg()
       .input(productPath)
       .input(path.join(CONFIG.overlaysDir, overlay))
-      .complexFilter([
-        {
-          filter: 'overlay',
-          options: { x: '(W-w)/2', y: '(H-h)/2' }
-        }
-      ])
+      .complexFilter([{ filter: 'overlay', options: { x: '(W-w)/2', y: '(H-h)/2' } }])
       .on('end', () => resolve(outputPath))
       .on('error', reject)
       .save(outputPath);
   });
 }
 
-// Obtener grupos disponibles para enviar
+// Obtener grupos disponibles
 async function getAvailableGroups() {
   if (!sock) return [];
   
@@ -188,7 +172,6 @@ async function getAvailableGroups() {
     
     return available.slice(0, CONFIG.groupsPerBatch);
   } catch (err) {
-    console.log('Error obteniendo grupos:', err);
     return [];
   }
 }
@@ -206,9 +189,6 @@ async function sendToGroups(gifPath, targetGroups) {
           viewOnce: true
         });
         
-        console.log(`✅ Enviado a grupo: ${groupId}`);
-        
-        // Registrar envío
         let groups = {};
         try {
           groups = JSON.parse(fs.readFileSync(CONFIG.groupsFile));
@@ -219,71 +199,40 @@ async function sendToGroups(gifPath, targetGroups) {
         groups[groupId] = Date.now();
         fs.writeFileSync(CONFIG.groupsFile, JSON.stringify(groups, null, 2));
         
-        // Esperar entre envíos
         await new Promise(r => setTimeout(r, 2000));
-      } catch (err) {
-        console.log(`❌ Error enviando a ${groupId}:`, err);
-      }
+      } catch (err) {}
     }
-  } catch (err) {
-    console.log('Error en sendToGroups:', err);
-  }
+  } catch (err) {}
 }
 
 // Tarea principal
 async function mainTask() {
-  if (!isConnected || !sock) {
-    console.log('⏳ Bot no conectado, esperando...');
-    return;
-  }
-  
-  console.log('🔄 Ejecutando tarea programada...');
+  if (!isConnected || !sock) return;
   
   try {
-    // 1. Obtener siguiente producto
     const productFile = getNextProduct();
-    if (!productFile) {
-      console.log('⚠️ No hay productos en la carpeta');
-      return;
-    }
+    if (!productFile) return;
     
-    console.log(`📷 Procesando: ${productFile}`);
-    
-    // 2. Generar GIF con overlay
     const gifPath = await generateGif(productFile);
-    if (!gifPath) {
-      console.log('❌ Error generando GIF');
-      return;
-    }
+    if (!gifPath) return;
     
-    // 3. Obtener grupos disponibles
     const targetGroups = await getAvailableGroups();
-    if (targetGroups.length === 0) {
-      console.log('⚠️ No hay grupos disponibles para enviar');
-      return;
-    }
+    if (targetGroups.length === 0) return;
     
-    // 4. Enviar a grupos
     await sendToGroups(gifPath, targetGroups);
     
-    // 5. Marcar producto como usado
     const sentLog = loadSentLog();
     sentLog.push(productFile);
     saveSentLog(sentLog);
     
-    // 6. Limpiar archivo temporal
-    try {
-      fs.unlinkSync(gifPath);
-    } catch {}
+    try { fs.unlinkSync(gifPath); } catch {}
     
-    console.log(`✅ Tarea completada. Enviado a ${targetGroups.length} grupos`);
-    
-  } catch (err) {
-    console.log('❌ Error en tarea principal:', err);
-  }
+  } catch (err) {}
 }
 
-// Función para conectar WhatsApp con código de emparejamiento
+// ==============================================
+// FUNCIÓN CORREGIDA DE CONEXIÓN CON CÓDIGO DE EMPAREJAMIENTO
+// ==============================================
 async function connectToWhatsApp() {
   console.log('🔄 Conectando a WhatsApp...');
   console.log('📱 MÉTODO: Código de emparejamiento (para usar en el mismo teléfono)');
@@ -299,56 +248,10 @@ async function connectToWhatsApp() {
       generateHighQualityLinkPreview: false
     });
     
-    // Solicitar código de emparejamiento
-    console.log('🔑 Solicitando código de emparejamiento...');
-    
-    // Esperar a que el socket esté listo
-    setTimeout(async () => {
-      try {
-        // Pedir número de teléfono
-        rl.question('📱 Escribe tu número de teléfono (con código de país, ej: 52123456789): ', async (phoneNumber) => {
-          // Limpiar número (quitar espacios, guiones, etc.)
-          phoneNumber = phoneNumber.replace(/[^0-9]/g, '');
-          
-          if (!phoneNumber.startsWith('52') && !phoneNumber.startsWith('521')) {
-            console.log('⚠️ Recuerda incluir el código de país (52 para México)');
-          }
-          
-          console.log(`⏳ Solicitando código para: ${phoneNumber}`);
-          
-          try {
-            // Solicitar código de emparejamiento
-            const pairingCode = await sock.requestPairingCode(phoneNumber);
-            
-            console.log('\n========================================');
-            console.log('✅ TU CÓDIGO DE EMPAREJAMIENTO ES:');
-            console.log('========================================');
-            console.log(`🔐 ${pairingCode}`);
-            console.log('========================================');
-            console.log('\n📱 Abre WhatsApp en tu teléfono');
-            console.log('➡️  Ve a: Ajustes > Dispositivos vinculados');
-            console.log('➡️  Selecciona: "Vincular un dispositivo"');
-            console.log('➡️  Elige: "Vincular con número de teléfono"');
-            console.log('➡️  Ingresa este código cuando lo pida\n');
-            
-            // Cerrar interfaz después de mostrar código
-            setTimeout(() => {
-              rl.close();
-            }, 5000);
-            
-          } catch (err) {
-            console.log('❌ Error solicitando código:', err);
-            rl.close();
-            setTimeout(connectToWhatsApp, 5000);
-          }
-        });
-      } catch (err) {
-        console.log('Error en solicitud de código:', err);
-      }
-    }, 2000);
+    let pairingCodeRequested = false;
     
     sock.ev.on('connection.update', async (update) => {
-      const { connection, lastDisconnect } = update;
+      const { connection, lastDisconnect, qr } = update;
       
       if (connection === 'open') {
         console.log('\n✅ CONECTADO A WHATSAPP EXITOSAMENTE');
@@ -361,12 +264,69 @@ async function connectToWhatsApp() {
         console.log('❌ Conexión cerrada');
         isConnected = false;
         
-        // Intentar reconectar
         reconnectAttempts++;
         const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 60000);
         console.log(`⏳ Reintentando en ${delay/1000} segundos...`);
         
         setTimeout(connectToWhatsApp, delay);
+      }
+      
+      // Mostrar QR si aparece (por si acaso)
+      if (qr) {
+        console.log('📱 Código QR detectado (método alternativo):');
+        console.log(qr);
+      }
+      
+      // Cuando el socket está listo, solicitar código de emparejamiento
+      if (connection === 'connecting' && !pairingCodeRequested) {
+        pairingCodeRequested = true;
+        
+        setTimeout(async () => {
+          try {
+            // Crear interfaz readline NUEVA cada vez
+            const rl = readline.createInterface({
+              input: process.stdin,
+              output: process.stdout
+            });
+            
+            // Pedir número de teléfono
+            rl.question('📱 Escribe tu número de teléfono (ej: 52123456789): ', async (phoneNumber) => {
+              // Limpiar número
+              phoneNumber = phoneNumber.replace(/[^0-9]/g, '');
+              
+              console.log(`⏳ Solicitando código para: ${phoneNumber}`);
+              
+              try {
+                // Solicitar código de emparejamiento
+                const pairingCode = await sock.requestPairingCode(phoneNumber);
+                
+                console.log('\n========================================');
+                console.log('✅ TU CÓDIGO DE EMPAREJAMIENTO ES:');
+                console.log('========================================');
+                console.log(`🔐 ${pairingCode}`);
+                console.log('========================================');
+                console.log('\n📱 Abre WhatsApp en tu teléfono');
+                console.log('➡️  Ajustes > Dispositivos vinculados');
+                console.log('➡️  "Vincular un dispositivo"');
+                console.log('➡️  "Vincular con número de teléfono"');
+                console.log('➡️  Ingresa este código\n');
+                
+                // NO cerramos readline aquí, pero tampoco es necesario mantenerla
+                // El usuario ya vio el código, podemos cerrarla después de 10 segundos
+                setTimeout(() => {
+                  rl.close();
+                }, 10000);
+                
+              } catch (err) {
+                console.log('❌ Error solicitando código:', err.message);
+                rl.close();
+              }
+            });
+            
+          } catch (err) {
+            console.log('Error:', err);
+          }
+        }, 3000);
       }
     });
     
@@ -385,38 +345,31 @@ connectToWhatsApp();
 
 // Programar tarea
 cron.schedule(CONFIG.checkInterval, mainTask);
-console.log(`⏰ Tarea programada cada 30 minutos (cuando haya conexión)`);
+console.log(`⏰ Tarea programada cada 30 minutos`);
 
 // Mantener proceso vivo
-process.on('uncaughtException', (err) => {
-  console.log('Error no capturado:', err);
-});
+process.on('uncaughtException', (err) => {});
 EOF
 
-# 9. CREAR ALGUNOS OVERLAYS BÁSICOS (GIFs pequeños)
+# 9. CREAR OVERLAYS BÁSICOS
 echo "🎨 Creando overlays básicos..."
 
-# Oferta GIF
 cat > overlays/oferta.gif << 'EOF'
 R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7
 EOF
 
-# Promo GIF
 cat > overlays/promo.gif << 'EOF'
 R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7
 EOF
 
-# Nuevo GIF
 cat > overlays/nuevo.gif << 'EOF'
 R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7
 EOF
 
-# Descuento GIF
 cat > overlays/descuento.gif << 'EOF'
 R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7
 EOF
 
-# Destacado GIF
 cat > overlays/destacado.gif << 'EOF'
 R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7
 EOF
@@ -450,46 +403,16 @@ echo "6️⃣  Elige 'Vincular con número de teléfono'"
 echo "7️⃣  Ingresa el código que apareció en Termux"
 echo ""
 echo "🖼️ Para poner tus productos:"
-echo "   - Coloca imágenes JPG o PNG en:"
 echo "   📁 /sdcard/MisProductos/"
 echo ""
-echo "✅ El bot comenzará a funcionar automáticamente"
-echo "   cada 30 minutos cuando tengas productos."
-echo ""
-echo "📌 El bot se reinicia solo si:"
+echo "✅ El bot se reinicia solo si:"
 echo "   - Se desconecta de internet"
 echo "   - Reinicias tu teléfono"
-echo "   - WhatsApp cierra la conexión"
 echo ""
 echo "========================================"
 echo ""
 
-# 12. VERIFICAR QUE LA CARPETA EXISTE ANTES DE ENTRAR
-if [ -d ~/whatsapp-bot ]; then
-    cd ~/whatsapp-bot
-    echo "🚀 Iniciando el bot..."
-    node bot.js
-else
-    echo "❌ ERROR: No se pudo encontrar la carpeta ~/whatsapp-bot"
-    echo "Intentando crear estructura manualmente..."
-    
-    mkdir -p ~/whatsapp-bot
-    cd ~/whatsapp-bot
-    
-    # Si el archivo bot.js no existe, lo creamos de emergencia
-    if [ ! -f bot.js ]; then
-        echo "⚠️ Recreando archivos necesarios..."
-        # No podemos copiar porque no hay temp, solo mostramos error
-        echo "❌ Error crítico: No se pudo recuperar el bot"
-        echo "Por favor, reinstala desde cero."
-        exit 1
-    fi
-    
-    if [ -f bot.js ]; then
-        echo "✅ Archivos recuperados. Iniciando bot..."
-        node bot.js
-    else
-        echo "❌ Error crítico: No se pudo recuperar el bot"
-        echo "Por favor, reinstala desde cero."
-    fi
-fi
+# 12. INICIAR BOT
+cd ~/whatsapp-bot
+echo "🚀 Iniciando el bot..."
+node bot.js
