@@ -1,4 +1,3 @@
-
 #!/data/data/com.termux/files/usr/bin/bash
 
 # ==============================================
@@ -42,7 +41,6 @@ cat > package.json << 'EOF'
     "@whiskeysockets/baileys": "^6.5.0",
     "node-cron": "^3.0.3",
     "fluent-ffmpeg": "^2.1.2",
-    "qrcode-terminal": "^0.12.0",
     "pino": "^8.17.2"
   }
 }
@@ -52,11 +50,11 @@ EOF
 echo "📦 Instalando dependencias de Node.js..."
 npm install
 
-# 8. CREAR ARCHIVO DEL BOT (bot.js)
+# 8. CREAR ARCHIVO DEL BOT (bot.js) - VERSIÓN CON CÓDIGO DE EMPAREJAMIENTO
 echo "🤖 Creando archivo principal del bot..."
 cat > bot.js << 'EOF'
 // ==============================================
-// BOT WHATSAPP AUTOMÁTICO
+// BOT WHATSAPP AUTOMÁTICO - CON CÓDIGO DE EMPAREJAMIENTO
 // ==============================================
 
 const { default: makeWASocket, useMultiFileAuthState, makeCacheableSignalKeyStore } = require('@whiskeysockets/baileys');
@@ -65,6 +63,7 @@ const path = require('path');
 const cron = require('node-cron');
 const ffmpeg = require('fluent-ffmpeg');
 const P = require('pino');
+const readline = require('readline');
 
 // Configuración
 const CONFIG = {
@@ -86,6 +85,12 @@ if (!fs.existsSync(CONFIG.groupsFile)) fs.writeFileSync(CONFIG.groupsFile, '{}')
 let sock = null;
 let reconnectAttempts = 0;
 let isConnected = false;
+
+// Interfaz para leer entrada del usuario
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout
+});
 
 // Cargar registros
 function loadSentLog() {
@@ -277,25 +282,76 @@ async function mainTask() {
   }
 }
 
-// Función para conectar WhatsApp
+// Función para conectar WhatsApp con código de emparejamiento
 async function connectToWhatsApp() {
   console.log('🔄 Conectando a WhatsApp...');
+  console.log('📱 MÉTODO: Código de emparejamiento (para usar en el mismo teléfono)');
   
   try {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     
     sock = makeWASocket({
       auth: state,
-      printQRInTerminal: true,
       logger: P({ level: 'silent' }),
-      browser: ['WhatsApp Bot', 'Chrome', '1.0.0']
+      browser: ['WhatsApp Bot', 'Chrome', '1.0.0'],
+      syncFullHistory: false,
+      generateHighQualityLinkPreview: false
     });
+    
+    // Solicitar código de emparejamiento
+    console.log('🔑 Solicitando código de emparejamiento...');
+    
+    // Esperar a que el socket esté listo
+    setTimeout(async () => {
+      try {
+        // Pedir número de teléfono
+        rl.question('📱 Escribe tu número de teléfono (con código de país, ej: 52123456789): ', async (phoneNumber) => {
+          // Limpiar número (quitar espacios, guiones, etc.)
+          phoneNumber = phoneNumber.replace(/[^0-9]/g, '');
+          
+          if (!phoneNumber.startsWith('52') && !phoneNumber.startsWith('521')) {
+            console.log('⚠️ Recuerda incluir el código de país (52 para México)');
+          }
+          
+          console.log(`⏳ Solicitando código para: ${phoneNumber}`);
+          
+          try {
+            // Solicitar código de emparejamiento
+            const pairingCode = await sock.requestPairingCode(phoneNumber);
+            
+            console.log('\n========================================');
+            console.log('✅ TU CÓDIGO DE EMPAREJAMIENTO ES:');
+            console.log('========================================');
+            console.log(`🔐 ${pairingCode}`);
+            console.log('========================================');
+            console.log('\n📱 Abre WhatsApp en tu teléfono');
+            console.log('➡️  Ve a: Ajustes > Dispositivos vinculados');
+            console.log('➡️  Selecciona: "Vincular un dispositivo"');
+            console.log('➡️  Elige: "Vincular con número de teléfono"');
+            console.log('➡️  Ingresa este código cuando lo pida\n');
+            
+            // Cerrar interfaz después de mostrar código
+            setTimeout(() => {
+              rl.close();
+            }, 5000);
+            
+          } catch (err) {
+            console.log('❌ Error solicitando código:', err);
+            rl.close();
+            setTimeout(connectToWhatsApp, 5000);
+          }
+        });
+      } catch (err) {
+        console.log('Error en solicitud de código:', err);
+      }
+    }, 2000);
     
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect } = update;
       
       if (connection === 'open') {
-        console.log('✅ Conectado a WhatsApp');
+        console.log('\n✅ CONECTADO A WHATSAPP EXITOSAMENTE');
+        console.log('🎉 El bot ya está funcionando\n');
         isConnected = true;
         reconnectAttempts = 0;
       }
@@ -323,24 +379,23 @@ async function connectToWhatsApp() {
 
 // Iniciar
 console.log('🚀 Iniciando Bot WhatsApp...');
+console.log('📱 Versión con código de emparejamiento\n');
 connectToWhatsApp();
 
 // Programar tarea
 cron.schedule(CONFIG.checkInterval, mainTask);
-console.log(`⏰ Tarea programada cada 30 minutos`);
+console.log(`⏰ Tarea programada cada 30 minutos (cuando haya conexión)`);
 
 // Mantener proceso vivo
 process.on('uncaughtException', (err) => {
   console.log('Error no capturado:', err);
 });
-
-console.log('📱 Bot listo. Escanea el QR arriba para conectar.');
 EOF
 
 # 9. CREAR ALGUNOS OVERLAYS BÁSICOS (GIFs pequeños)
 echo "🎨 Creando overlays básicos..."
 
-# Oferta GIF (muy simple, solo texto)
+# Oferta GIF
 cat > overlays/oferta.gif << 'EOF'
 R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7
 EOF
@@ -352,6 +407,16 @@ EOF
 
 # Nuevo GIF
 cat > overlays/nuevo.gif << 'EOF'
+R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7
+EOF
+
+# Descuento GIF
+cat > overlays/descuento.gif << 'EOF'
+R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7
+EOF
+
+# Destacado GIF
+cat > overlays/destacado.gif << 'EOF'
 R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7
 EOF
 
@@ -373,17 +438,18 @@ echo "========================================"
 echo "✅ INSTALACIÓN COMPLETADA"
 echo "========================================"
 echo ""
-echo "📱 PASOS PARA USAR EL BOT:"
+echo "📱 PASOS PARA CONECTAR EL BOT:"
 echo ""
-echo "1. En este momento el bot está iniciando"
-echo "2. Verás un código QR arriba ☝️"
-echo "3. Abre WhatsApp en tu teléfono"
-echo "4. Ve a Ajustes > Dispositivos vinculados"
-echo "5. Escanea el QR que aparece en Termux"
+echo "1️⃣  El bot te pedirá tu número de teléfono"
+echo "2️⃣  Escríbelo completo (ej: 52123456789)"
+echo "3️⃣  Recibirás un código de 8 dígitos"
+echo "4️⃣  Abre WhatsApp > Ajustes > Dispositivos vinculados"
+echo "5️⃣  Elige 'Vincular con número de teléfono'"
+echo "6️⃣  Ingresa el código que apareció en Termux"
 echo ""
 echo "🖼️ Para poner tus productos:"
 echo "   - Coloca imágenes JPG o PNG en:"
-echo "     /sdcard/MisProductos/"
+echo "   📁 /sdcard/MisProductos/"
 echo ""
 echo "✅ El bot comenzará a funcionar automáticamente"
 echo "   cada 30 minutos cuando tengas productos."
